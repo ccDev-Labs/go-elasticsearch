@@ -30,6 +30,7 @@ const Version = version.Client
 
 var (
 	userAgent   string
+	metaHeader  string
 	reGoVersion = regexp.MustCompile(`go(\d+\.\d+\..+)`)
 
 	defaultMaxRetries    = 3
@@ -38,6 +39,7 @@ var (
 
 func init() {
 	userAgent = initUserAgent()
+	metaHeader = initMetaHeader()
 }
 
 // Interface defines the interface for HTTP client.
@@ -49,10 +51,11 @@ type Interface interface {
 // Config represents the configuration of HTTP client.
 //
 type Config struct {
-	URLs     []*url.URL
-	Username string
-	Password string
-	APIKey   string
+	URLs         []*url.URL
+	Username     string
+	Password     string
+	APIKey       string
+	ServiceToken string
 
 	Header http.Header
 	CACert []byte
@@ -65,6 +68,8 @@ type Config struct {
 
 	EnableMetrics     bool
 	EnableDebugLogger bool
+
+	DisableMetaHeader bool
 
 	DiscoverNodesInterval time.Duration
 
@@ -80,15 +85,17 @@ type Config struct {
 type Client struct {
 	sync.Mutex
 
-	urls     []*url.URL
-	username string
-	password string
-	apikey   string
-	header   http.Header
+	urls         []*url.URL
+	username     string
+	password     string
+	apikey       string
+	servicetoken string
+	header       http.Header
 
 	retryOnStatus         []int
 	disableRetry          bool
 	enableRetryOnTimeout  bool
+	disableMetaHeader     bool
 	maxRetries            int
 	retryBackoff          func(attempt int) time.Duration
 	discoverNodesInterval time.Duration
@@ -142,15 +149,17 @@ func New(cfg Config) (*Client, error) {
 	}
 
 	client := Client{
-		urls:     cfg.URLs,
-		username: cfg.Username,
-		password: cfg.Password,
-		apikey:   cfg.APIKey,
-		header:   cfg.Header,
+		urls:         cfg.URLs,
+		username:     cfg.Username,
+		password:     cfg.Password,
+		apikey:       cfg.APIKey,
+		servicetoken: cfg.ServiceToken,
+		header:       cfg.Header,
 
 		retryOnStatus:         cfg.RetryOnStatus,
 		disableRetry:          cfg.DisableRetry,
 		enableRetryOnTimeout:  cfg.EnableRetryOnTimeout,
+		disableMetaHeader:     cfg.DisableMetaHeader,
 		maxRetries:            cfg.MaxRetries,
 		retryBackoff:          cfg.RetryBackoff,
 		discoverNodesInterval: cfg.DiscoverNodesInterval,
@@ -209,6 +218,7 @@ func (c *Client) Perform(req *http.Request) (*http.Response, error) {
 	// Update request
 	c.setReqUserAgent(req)
 	c.setReqGlobalHeader(req)
+	c.setMetaHeader(req)
 
 	if req.Body != nil && req.Body != http.NoBody && req.GetBody == nil {
 		if !c.disableRetry || (c.logger != nil && c.logger.RequestBodyEnabled()) {
@@ -224,7 +234,7 @@ func (c *Client) Perform(req *http.Request) (*http.Response, error) {
 		}
 	}
 
-	for i := 1; i <= c.maxRetries; i++ {
+	for i := 0; i <= c.maxRetries; i++ {
 		var (
 			conn            *Connection
 			shouldRetry     bool
@@ -246,7 +256,7 @@ func (c *Client) Perform(req *http.Request) (*http.Response, error) {
 		c.setReqURL(conn.URL, req)
 		c.setReqAuth(conn.URL, req)
 
-		if !c.disableRetry && i > 1 && req.Body != nil && req.Body != http.NoBody {
+		if !c.disableRetry && i > 0 && req.Body != nil && req.Body != http.NoBody {
 			body, err := req.GetBody()
 			if err != nil {
 				return nil, fmt.Errorf("cannot get request body: %s", err)
@@ -329,7 +339,7 @@ func (c *Client) Perform(req *http.Request) (*http.Response, error) {
 
 		// Delay the retry if a backoff function is configured
 		if c.retryBackoff != nil {
-			time.Sleep(c.retryBackoff(i))
+			time.Sleep(c.retryBackoff(i + 1))
 		}
 	}
 
@@ -376,6 +386,15 @@ func (c *Client) setReqAuth(u *url.URL, req *http.Request) *http.Request {
 			return req
 		}
 
+		if c.servicetoken != "" {
+			var b bytes.Buffer
+			b.Grow(len("Bearer ") + len(c.servicetoken))
+			b.WriteString("Bearer ")
+			b.WriteString(c.servicetoken)
+			req.Header.Set("Authorization", b.String())
+			return req
+		}
+
 		if c.username != "" && c.password != "" {
 			req.SetBasicAuth(c.username, c.password)
 			return req
@@ -399,6 +418,21 @@ func (c *Client) setReqGlobalHeader(req *http.Request) *http.Request {
 				}
 			}
 		}
+	}
+	return req
+}
+
+func (c *Client) setMetaHeader(req *http.Request) *http.Request {
+	if c.disableMetaHeader {
+		req.Header.Del(HeaderClientMeta)
+		return req
+	}
+
+	existingMetaHeader := req.Header.Get(HeaderClientMeta)
+	if existingMetaHeader != "" {
+		req.Header.Set(HeaderClientMeta, strings.Join([]string{metaHeader, existingMetaHeader}, ","))
+	} else {
+		req.Header.Add(HeaderClientMeta, metaHeader)
 	}
 	return req
 }

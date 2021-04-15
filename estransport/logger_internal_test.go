@@ -59,7 +59,8 @@ func TestTransportLogger(t *testing.T) {
 				req, _ := http.NewRequest("GET", "/abc", nil)
 				_, err := tp.Perform(req)
 				if err != nil {
-					t.Fatalf("Unexpected error: %s", err)
+					t.Errorf("Unexpected error: %s", err)
+					return
 				}
 			}()
 		}
@@ -235,9 +236,10 @@ func TestTransportLogger(t *testing.T) {
 		var dst strings.Builder
 
 		tp, _ := New(Config{
-			URLs:      []*url.URL{{Scheme: "http", Host: "foo"}},
-			Transport: newRoundTripper(),
-			Logger:    &CurlLogger{Output: &dst, EnableRequestBody: true, EnableResponseBody: true},
+			URLs:              []*url.URL{{Scheme: "http", Host: "foo"}},
+			Transport:         newRoundTripper(),
+			Logger:            &CurlLogger{Output: &dst, EnableRequestBody: true, EnableResponseBody: true},
+			DisableMetaHeader: true,
 		})
 
 		req, _ := http.NewRequest("GET", "/abc?q=a,b", nil)
@@ -255,7 +257,6 @@ func TestTransportLogger(t *testing.T) {
 
 		output := dst.String()
 		output = strings.TrimSuffix(output, "\n")
-		// fmt.Println(output)
 
 		lines := strings.Split(output, "\n")
 

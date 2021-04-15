@@ -133,6 +133,10 @@ func (c *Client) getNodesInfo() ([]nodeInfo, error) {
 	c.setReqAuth(conn.URL, req)
 	c.setReqUserAgent(req)
 
+	if c.disableMetaHeader == false {
+		c.setMetaHeader(req)
+	}
+
 	res, err := c.transport.RoundTrip(req)
 	if err != nil {
 		return out, err
@@ -156,18 +160,14 @@ func (c *Client) getNodesInfo() ([]nodeInfo, error) {
 
 	for id, node := range nodes {
 		node.ID = id
-		u, err := c.getNodeURL(node, scheme)
-		if err != nil {
-			return out, err
-		}
-		node.URL = u
+		node.URL = c.getNodeURL(node, scheme)
 		out = append(out, node)
 	}
 
 	return out, nil
 }
 
-func (c *Client) getNodeURL(node nodeInfo, scheme string) (*url.URL, error) {
+func (c *Client) getNodeURL(node nodeInfo, scheme string) *url.URL {
 	var (
 		host string
 		port string
@@ -188,7 +188,7 @@ func (c *Client) getNodeURL(node nodeInfo, scheme string) (*url.URL, error) {
 		Host:   host + ":" + port,
 	}
 
-	return u, nil
+	return u
 }
 
 func (c *Client) scheduleDiscoverNodes(d time.Duration) {
